@@ -152,6 +152,12 @@ notification reading `Command not found: "xdg-terminal-exec"`.
   `systemctl --user enable`d, because the unit is `WantedBy=graphical-session.target` and
   enabling it would also start it under Plasma, which runs its own agent.
 
+### Local additions
+
+Files added on top of Omarchy — the `SUPER + A` workspace overview (hyprtasking), the polkit
+agent Omarchy does not start, and a login check that catches hyprpm plugins silently failing
+to load after a Hyprland upgrade. See [`local/README.md`](local/README.md).
+
 ### Upstream fix carried here
 
 Branch `fix/hybrid-gpu-no-glx-pin` stops `default/hypr/nvidia.lua` pinning
