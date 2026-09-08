@@ -77,3 +77,85 @@ its screenshots are also hosted.
 ## License
 
 Omarchy is released under the [MIT License](https://opensource.org/licenses/MIT).
+
+---
+
+## This fork: side-by-side install notes
+
+This fork runs Omarchy **alongside an existing EndeavourOS + KDE Plasma install** on an
+Alienware x16 R2, rather than as the machine's only OS. Omarchy's installer assumes it owns
+the system, so it was not run. The desktop was assembled by hand instead, and this section
+records every deviation and why — so the differences are recoverable rather than folklore.
+
+### Layout
+
+`OMARCHY_PATH` points at `~/.local/share/omarchy` (this checkout) instead of
+`/usr/share/omarchy`, so no root-owned copy exists and the whole desktop is user-local.
+The session entry is a five-line `.desktop` in `/usr/share/wayland-sessions/`, which is the
+only file installed outside `$HOME`.
+
+**Consequence:** anything hardcoding `/usr/share/omarchy` or `/usr/bin/omarchy-*` is inert
+or broken here. `omarchy-sleep-lock.service` needed its `ExecStart` repointed at this
+checkout; `omarchy-migrate-notify.service` stays inert because it is conditioned on
+`/usr/share/omarchy/migrations`.
+
+### Installer scripts deliberately not run
+
+Packages are system-wide, but **installing a package is not the same as enabling it** —
+Arch enables nothing on install. Everything genuinely invasive in Omarchy lives in these
+scripts, not in the package list, so skipping them is what keeps the host system intact:
+
+| path | what it would do |
+|---|---|
+| `install/post-install/pacman.sh` | replaces `/etc/pacman.conf` and the mirrorlist wholesale |
+| `install/config/enable-services.sh` | enables `sddm`, `cups`, `docker.socket`, `avahi`, oomd |
+| `install/config/firewall.sh` | sets `ENABLED=yes` in ufw with `default deny incoming` |
+| `etc/tmpfiles.d/omarchy-nopasswd-sudo.conf` | grants passwordless sudo |
+| `etc/tmpfiles.d/omarchy-zswap.conf` | enables zswap — already disabled here, deliberately |
+| `etc/systemd/logind.conf.d/` | overrides power-button and inhibit-delay behaviour |
+| `install/login/sddm.sh` | installs a second display manager; `plasmalogin` owns that role |
+
+The **user-level** scripts (`install/user/**`) are the safe subset: they run as the user and
+write only into `$HOME`. Two still needed care — `user/xcompose.sh` overwrites `~/.XCompose`
+outright and hardcodes `/usr/share/omarchy`, and `user/first-run/enable-user-units.sh`
+assumes the units are in `/usr/lib/systemd/user`, where a package would have put them.
+
+### Packages skipped from `omarchy-base.packages`
+
+Of the 150, six are not installed:
+
+- **`sddm`** — installing it is harmless, but `plasmalogin` already owns
+  `display-manager.service`; a second display manager only invites confusion later.
+- **`ufw`**, **`ufw-docker`** — skipped as unwanted here, not as unsafe; both are inert
+  until enabled. Worth knowing if ufw is ever turned on: Omarchy's ruleset is
+  `default deny incoming`, which would block inbound Tailscale and SSH to this host.
+- **`docker-buildx`**, **`docker-compose`** — skipped for the same reason. `docker` itself
+  was already installed on this machine, and its service is left `disabled`.
+- **`ttf-jetbrains-mono-nerd-basic`** — conflicts with the full `ttf-jetbrains-mono-nerd`
+  already installed. Theirs is a subset of the same 3.5.1 release, so the full one was kept.
+
+`nvim` in their list is satisfied by Arch's `neovim`, which provides the same binary.
+
+Trimming further was a mistake worth recording: an initial 17-package install left
+`yaru-icon-theme` missing while gsettings still pointed at `Yaru-blue` (every icon rendered
+as the missing-icon placeholder), `ttf-ia-writer` missing so text silently fell back to Noto
+Sans at different metrics, and no `xdg-terminal-exec`, which surfaced as a desktop
+notification reading `Command not found: "xdg-terminal-exec"`.
+
+### Additions upstream does not ship
+
+- **`otf-font-awesome`** — upstream ships only `woff2-font-awesome`, which contains no
+  `.ttf`/`.otf` files, so fontconfig cannot serve it to native applications.
+- **`hyprpolkitagent`**, started from `~/.config/hypr/autostart.lua` — Omarchy's autostart
+  launches no polkit agent, so only `polkitd` runs and anything needing authentication
+  fails silently instead of prompting. Started per-session rather than
+  `systemctl --user enable`d, because the unit is `WantedBy=graphical-session.target` and
+  enabling it would also start it under Plasma, which runs its own agent.
+
+### Upstream fix carried here
+
+Branch `fix/hybrid-gpu-no-glx-pin` stops `default/hypr/nvidia.lua` pinning
+`__GLX_VENDOR_LIBRARY_NAME=nvidia` on hybrid laptops, and rewrites
+`omarchy-hw-hybrid-gpu` to count GPUs from sysfs instead of `lspci` — which resumes a
+runtime-suspended GPU, the very thing the sibling NVIDIA detectors avoid and document.
+Applicable to any Optimus machine, not just this one.
