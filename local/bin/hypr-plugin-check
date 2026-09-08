@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Warn when an enabled hyprpm plugin failed to load.
+#
+# hyprpm plugins are compiled against one exact Hyprland build, so a `hyprland` upgrade
+# leaves them unloadable until `hyprpm update` rebuilds them. Nothing announces this: the
+# plugin's keybindings simply stop doing anything, with no error anywhere. That is a
+# genuinely horrible thing to debug months later, so detect it at login and say so.
+#
+# Deliberately NOT a pacman hook: hyprpm's store is /var/cache/hyprpm/$USER and root-owned,
+# so a root-run hook would use the wrong store, and running it as the user mid-transaction
+# would need a password. Automating that would require a passwordless-sudo rule, which this
+# machine deliberately does not have. Detection is safe; the fix stays a deliberate action.
+set -uo pipefail
+
+command -v hyprpm >/dev/null || exit 0
+hyprctl version >/dev/null 2>&1 || exit 0   # no compositor, nothing to check
+
+# Names hyprpm considers enabled.
+#
+# hyprpm colours its output even when piped, and the escape sits BETWEEN the label and the
+# value ("enabled: \e[32mtrue"), so a naive /enabled: true/ never matches and this check
+# would silently pass while plugins were broken. Strip ANSI before parsing.
+mapfile -t enabled < <(hyprpm list 2>/dev/null \
+  | sed 's/\x1b\[[0-9;]*m//g' \
+  | awk '/Plugin /{name=$NF} /enabled: *true/{if (name) print name}')
+((${#enabled[@]})) || exit 0
+
+loaded=$(hyprctl plugin list 2>/dev/null)
+missing=()
+for p in "${enabled[@]}"; do
+  grep -qi "^Plugin ${p}\b\|^Plugin ${p^}\b" <<<"$loaded" || missing+=("$p")
+done
+
+((${#missing[@]})) || exit 0
+
+notify-send -u critical -i dialog-warning \
+  "Hyprland plugin not loaded" \
+  "$(printf '%s, ' "${missing[@]}" | sed 's/, $//') failed to load — likely a Hyprland upgrade.
+
+Rebuild with:  hyprpm update && hyprpm reload" 2>/dev/null
+logger -t hypr-plugin-check "plugins enabled but not loaded: ${missing[*]}"
